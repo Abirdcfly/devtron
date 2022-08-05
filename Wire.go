@@ -738,6 +738,14 @@ func InitializeApp() (*App, error) {
 		wire.Bind(new(pipelineConfig.PipelineStatusTimelineRepository), new(*pipelineConfig.PipelineStatusTimelineRepositoryImpl)),
 		pipeline.NewPresetContainerRegistryHandlerImpl,
 		wire.Bind(new(pipeline.PresetContainerRegistryHandler), new(*pipeline.PresetContainerRegistryHandlerImpl)),
+		router.NewUserAttributesRouterImpl,
+		wire.Bind(new(router.UserAttributesRouter), new(*router.UserAttributesRouterImpl)),
+		restHandler.NewUserAttributesRestHandlerImpl,
+		wire.Bind(new(restHandler.UserAttributesRestHandler), new(*restHandler.UserAttributesRestHandlerImpl)),
+		attributes.NewUserAttributesServiceImpl,
+		wire.Bind(new(attributes.UserAttributesService), new(*attributes.UserAttributesServiceImpl)),
+		repository.NewUserAttributesRepositoryImpl,
+		wire.Bind(new(repository.UserAttributesRepository), new(*repository.UserAttributesRepositoryImpl)),
 	)
 	return &App{}, nil
 }
