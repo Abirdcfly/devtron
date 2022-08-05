@@ -261,7 +261,7 @@ func (handler UserRestHandlerImpl) GetById(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
-	res.RoleFilters = filteredRoleFilter
+	//res.RoleFilters = filteredRoleFilter
 	//RBAC enforcer Ends
 
 	common.WriteJsonResp(w, err, res, http.StatusOK)
