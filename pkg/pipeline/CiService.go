@@ -26,6 +26,7 @@ import (
 	"github.com/devtron-labs/devtron/pkg/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
@@ -34,6 +35,7 @@ import (
 	"github.com/devtron-labs/devtron/internal/sql/repository/pipelineConfig"
 	"github.com/devtron-labs/devtron/internal/util"
 	"github.com/devtron-labs/devtron/pkg/bean"
+	util3 "github.com/devtron-labs/devtron/util"
 	util2 "github.com/devtron-labs/devtron/util/event"
 	"go.uber.org/zap"
 )
@@ -56,6 +58,7 @@ type CiServiceImpl struct {
 	prePostCiScriptHistoryService history.PrePostCiScriptHistoryService
 	pipelineStageService          PipelineStageService
 	userService                   user.UserService
+	presetRegistryHandler         PresetContainerRegistryHandler
 }
 
 func NewCiServiceImpl(Logger *zap.SugaredLogger, workflowService WorkflowService,
@@ -64,7 +67,7 @@ func NewCiServiceImpl(Logger *zap.SugaredLogger, workflowService WorkflowService
 	eventFactory client.EventFactory, mergeUtil *util.MergeUtil, ciPipelineRepository pipelineConfig.CiPipelineRepository,
 	prePostCiScriptHistoryService history.PrePostCiScriptHistoryService,
 	pipelineStageService PipelineStageService,
-	userService user.UserService) *CiServiceImpl {
+	userService user.UserService, presetContainerRegistryHandler PresetContainerRegistryHandler) *CiServiceImpl {
 	return &CiServiceImpl{
 		Logger:                        Logger,
 		workflowService:               workflowService,
@@ -78,6 +81,7 @@ func NewCiServiceImpl(Logger *zap.SugaredLogger, workflowService WorkflowService
 		prePostCiScriptHistoryService: prePostCiScriptHistoryService,
 		pipelineStageService:          pipelineStageService,
 		userService:                   userService,
+		presetRegistryHandler:         presetContainerRegistryHandler,
 	}
 }
 
@@ -386,15 +390,27 @@ func (impl *CiServiceImpl) buildWfRequestForCiPipeline(pipeline *pipelineConfig.
 		return nil, err
 	}
 	dockerfilePath := filepath.Join(pipeline.CiTemplate.GitMaterial.CheckoutPath, pipeline.CiTemplate.DockerfilePath)
+
+	dockerRepository := pipeline.CiTemplate.DockerRepository
+	dockerRegistryId := pipeline.CiTemplate.DockerRegistry.Id
+	registryUrl := pipeline.CiTemplate.DockerRegistry.RegistryURL
+	if dockerRegistryId == util3.DockerPresetContainerRegistryId {
+		registryConfigBean := impl.presetRegistryHandler.GetPresetDockerRegistryConfigBean()
+		dockerRepository = registryConfigBean.PresetRegistryRepoName
+		if isPublicRegistry(registryConfigBean, registryUrl) {
+			dockerRepository = getPublicRegistryRepoName(dockerRepository, dockerImageTag)
+			dockerImageTag = registryConfigBean.PresetPublicRegistryImgTagValue
+		}
+	}
 	workflowRequest := &WorkflowRequest{
 		WorkflowNamePrefix:         strconv.Itoa(savedWf.Id) + "-" + savedWf.Name,
 		PipelineName:               pipeline.Name,
 		PipelineId:                 pipeline.Id,
-		DockerRegistryId:           pipeline.CiTemplate.DockerRegistry.Id,
+		DockerRegistryId:           dockerRegistryId,
 		DockerRegistryType:         string(pipeline.CiTemplate.DockerRegistry.RegistryType),
 		DockerImageTag:             dockerImageTag,
-		DockerRegistryURL:          pipeline.CiTemplate.DockerRegistry.RegistryURL,
-		DockerRepository:           pipeline.CiTemplate.DockerRepository,
+		DockerRegistryURL:          registryUrl,
+		DockerRepository:           dockerRepository,
 		DockerBuildArgs:            string(merged),
 		DockerBuildTargetPlatform:  pipeline.CiTemplate.TargetPlatform,
 		DockerFileLocation:         dockerfilePath,
@@ -449,6 +465,15 @@ func (impl *CiServiceImpl) buildWfRequestForCiPipeline(pipeline *pipelineConfig.
 		return nil, fmt.Errorf("cloudprovider %s not supported", workflowRequest.CloudProvider)
 	}
 	return workflowRequest, nil
+}
+
+func isPublicRegistry(configBean *PresetDockerRegistryConfigBean, url string) bool {
+	publicRegistry := configBean.PresetPublicRegistry
+	return strings.Index(url, publicRegistry) == 0
+}
+
+func getPublicRegistryRepoName(dockerRepository string, dockerImgTag string) string {
+	return dockerRepository + "-" + dockerImgTag
 }
 
 func buildCiStepsDataFromDockerBuildScripts(dockerBuildScripts []*bean.CiScript) []*bean2.StepObject {

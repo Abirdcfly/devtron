@@ -30,6 +30,7 @@ import (
 	repository4 "github.com/devtron-labs/devtron/pkg/pipeline/history/repository"
 	"github.com/devtron-labs/devtron/pkg/sql"
 	util3 "github.com/devtron-labs/devtron/pkg/util"
+	util1 "github.com/devtron-labs/devtron/util"
 	"net/http"
 	"net/url"
 	"sort"
@@ -145,6 +146,7 @@ type PipelineBuilderImpl struct {
 	chartService                     chart.ChartService
 	helmAppService                   client.HelmAppService
 	deploymentGroupRepository        repository.DeploymentGroupRepository
+	presetRegistryHandler            PresetContainerRegistryHandler
 }
 
 func NewPipelineBuilderImpl(logger *zap.SugaredLogger,
@@ -180,7 +182,7 @@ func NewPipelineBuilderImpl(logger *zap.SugaredLogger,
 	pipelineStageService PipelineStageService, chartRefRepository chartRepoRepository.ChartRefRepository,
 	chartTemplateService util.ChartTemplateService, chartService chart.ChartService,
 	helmAppService client.HelmAppService,
-	deploymentGroupRepository repository.DeploymentGroupRepository) *PipelineBuilderImpl {
+	deploymentGroupRepository repository.DeploymentGroupRepository, presetRegistryHandler PresetContainerRegistryHandler) *PipelineBuilderImpl {
 	return &PipelineBuilderImpl{
 		logger:                           logger,
 		dbPipelineOrchestrator:           dbPipelineOrchestrator,
@@ -220,6 +222,7 @@ func NewPipelineBuilderImpl(logger *zap.SugaredLogger,
 		chartService:                     chartService,
 		helmAppService:                   helmAppService,
 		deploymentGroupRepository:        deploymentGroupRepository,
+		presetRegistryHandler:            presetRegistryHandler,
 	}
 }
 
@@ -391,12 +394,17 @@ func (impl PipelineBuilderImpl) getCiTemplateVariables(appId int) (ciConfig *bea
 		impl.logger.Errorw("invalid reg url", "err", err)
 		return nil, err
 	}
+	dockerRepository := template.DockerRepository
+	dockerRegistryId := template.DockerRegistry.Id
+	if dockerRegistryId == util1.DockerPresetContainerRegistryId {
+		dockerRepository = impl.presetRegistryHandler.GetPresetDockerRegistryConfigBean().PresetRegistryRepoName
+	}
 	ciConfig = &bean.CiConfigRequest{
 		Id:                template.Id,
 		AppId:             template.AppId,
 		AppName:           template.App.AppName,
-		DockerRepository:  template.DockerRepository,
-		DockerRegistry:    template.DockerRegistry.Id,
+		DockerRepository:  dockerRepository,
+		DockerRegistry:    dockerRegistryId,
 		DockerRegistryUrl: regHost,
 		DockerBuildConfig: &bean.DockerBuildConfig{DockerfilePath: template.DockerfilePath, Args: dockerArgs, GitMaterialId: template.GitMaterialId, TargetPlatform: template.TargetPlatform},
 		Version:           template.Version,
@@ -1761,6 +1769,7 @@ func (impl PipelineBuilderImpl) BuildArtifactsForParentStage(cdPipelineId int, p
 func (impl PipelineBuilderImpl) BuildArtifactsForCdStage(pipelineId int, stageType bean2.WorkflowType, ciArtifacts []bean.CiArtifactBean, artifactMap map[int]int, parent bool, limit int, parentCdId int) ([]bean.CiArtifactBean, map[int]int, error) {
 	//getting running artifact id for parent cd
 	parentCdRunningArtifactId := 0
+	presetDockerRegistryConfigBean := impl.presetRegistryHandler.GetPresetDockerRegistryConfigBean()
 	if parentCdId > 0 && parent {
 		parentCdWfrList, err := impl.cdWorkflowRepository.FindArtifactByPipelineIdAndRunnerType(parentCdId, bean2.CD_WORKFLOW_TYPE_DEPLOY, 1)
 		if err != nil {
@@ -1810,6 +1819,7 @@ func (impl PipelineBuilderImpl) BuildArtifactsForCdStage(pipelineId int, stageTy
 				if runningOnParentCd {
 					ciArtifact.RunningOnParentCd = runningOnParentCd
 				}
+				impl.checkAndUpdatePresetRegistryData(&ciArtifact, presetDockerRegistryConfigBean, wfr.CdWorkflow.CiArtifact.CreatedOn)
 				ciArtifacts = append(ciArtifacts, ciArtifact)
 				//storing index of ci artifact for using when updating old entry
 				artifactMap[wfr.CdWorkflow.CiArtifact.Id] = len(ciArtifacts) - 1
@@ -1835,6 +1845,7 @@ func (impl PipelineBuilderImpl) BuildArtifactsForCIParent(cdPipelineId int, ciAr
 		impl.logger.Errorw("error in getting artifacts for ci", "err", err)
 		return ciArtifacts, err
 	}
+	presetDockerRegistryConfigBean := impl.presetRegistryHandler.GetPresetDockerRegistryConfigBean()
 	for _, artifact := range artifacts {
 		if _, ok := artifactMap[artifact.Id]; !ok {
 			mInfo, err := parseMaterialInfo([]byte(artifact.MaterialInfo), artifact.DataSource)
@@ -1842,17 +1853,32 @@ func (impl PipelineBuilderImpl) BuildArtifactsForCIParent(cdPipelineId int, ciAr
 				mInfo = []byte("[]")
 				impl.logger.Errorw("Error in parsing artifact material info", "err", err, "artifact", artifact)
 			}
-			ciArtifacts = append(ciArtifacts, bean.CiArtifactBean{
+			artifactBean := bean.CiArtifactBean{
 				Id:           artifact.Id,
 				Image:        artifact.Image,
 				ImageDigest:  artifact.ImageDigest,
 				MaterialInfo: mInfo,
 				ScanEnabled:  artifact.ScanEnabled,
 				Scanned:      artifact.Scanned,
-			})
+			}
+			impl.checkAndUpdatePresetRegistryData(&artifactBean, presetDockerRegistryConfigBean, artifact.CreatedOn)
+			ciArtifacts = append(ciArtifacts, artifactBean)
 		}
 	}
 	return ciArtifacts, nil
+}
+
+func (impl PipelineBuilderImpl) checkAndUpdatePresetRegistryData(artifactBean *bean.CiArtifactBean, presetDockerRegistryConfigBean *PresetDockerRegistryConfigBean, createdOn time.Time) {
+	dockerImage := artifactBean.Image
+	presetRegistryRepoName := presetDockerRegistryConfigBean.PresetRegistryRepoName
+	buildUsingPresetRegistry := strings.Contains(dockerImage, presetRegistryRepoName)
+	artifactBean.BuildUsingPresetRegistry = buildUsingPresetRegistry
+	if buildUsingPresetRegistry {
+		imageCreatedTime := createdOn
+		timegapDurationSinceBuild := time.Since(imageCreatedTime)
+		presetExpiryCnfigrdDuration := time.Duration(presetDockerRegistryConfigBean.PresetRegistryImageExpiryTimeInSecs) * time.Second
+		artifactBean.PresetImageDeleted = timegapDurationSinceBuild > presetExpiryCnfigrdDuration
+	}
 }
 
 func (impl PipelineBuilderImpl) FetchArtifactForRollback(cdPipelineId int) (bean.CiArtifactResponse, error) {

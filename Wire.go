@@ -90,6 +90,8 @@ import (
 	jira2 "github.com/devtron-labs/devtron/pkg/jira"
 	"github.com/devtron-labs/devtron/pkg/notifier"
 	"github.com/devtron-labs/devtron/pkg/pipeline"
+
+	//pipelineCron "github.com/devtron-labs/devtron/pkg/pipeline/cron"
 	history3 "github.com/devtron-labs/devtron/pkg/pipeline/history"
 	repository3 "github.com/devtron-labs/devtron/pkg/pipeline/history/repository"
 	repository5 "github.com/devtron-labs/devtron/pkg/pipeline/repository"
@@ -734,6 +736,16 @@ func InitializeApp() (*App, error) {
 
 		pipelineConfig.NewPipelineStatusTimelineRepositoryImpl,
 		wire.Bind(new(pipelineConfig.PipelineStatusTimelineRepository), new(*pipelineConfig.PipelineStatusTimelineRepositoryImpl)),
+		pipeline.NewPresetContainerRegistryHandlerImpl,
+		wire.Bind(new(pipeline.PresetContainerRegistryHandler), new(*pipeline.PresetContainerRegistryHandlerImpl)),
+		router.NewUserAttributesRouterImpl,
+		wire.Bind(new(router.UserAttributesRouter), new(*router.UserAttributesRouterImpl)),
+		restHandler.NewUserAttributesRestHandlerImpl,
+		wire.Bind(new(restHandler.UserAttributesRestHandler), new(*restHandler.UserAttributesRestHandlerImpl)),
+		attributes.NewUserAttributesServiceImpl,
+		wire.Bind(new(attributes.UserAttributesService), new(*attributes.UserAttributesServiceImpl)),
+		repository.NewUserAttributesRepositoryImpl,
+		wire.Bind(new(repository.UserAttributesRepository), new(*repository.UserAttributesRepositoryImpl)),
 	)
 	return &App{}, nil
 }
